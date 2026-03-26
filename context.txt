@@ -2116,6 +2116,7 @@ public final class App {
         AppLogger.init();
         LOG.info("Starting Dataverse Downloader");
 
+        configureFlatLafForRobustStartup();
         FlatLightLaf.setup();
 
         String startupInput = StartupLinkParser.parseStartupInput(args);
@@ -2166,6 +2167,18 @@ public final class App {
 
             LOG.info("Main window initialized");
         });
+    }
+
+    /**
+     * Configures FlatLaf in a conservative way to avoid startup issues when the
+     * application is launched from network/UNC paths or virtual shared folders.
+     *
+     * <p>These properties disable FlatLaf features that rely on loading or
+     * locating native helper libraries for custom window decorations.</p>
+     */
+    private static void configureFlatLafForRobustStartup() {
+        System.setProperty("flatlaf.useWindowDecorations", "false");
+        System.setProperty("flatlaf.useNativeLibrary", "false");
     }
 
     /**
@@ -4792,7 +4805,6 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -4803,7 +4815,9 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -4819,6 +4833,14 @@ import de.unibn.hrz.dataverse.downloader.model.DownloadManifestEntry;
  *
  * <p>This class belongs to the service layer and is independent of the UI.</p>
  *
+ * <p>Important implementation note: coordination is intentionally done with
+ * JVM-local read/write locks instead of {@code FileChannel.lock()}.
+ * Java file locks throw {@code OverlappingFileLockException} when the same JVM
+ * acquires overlapping locks on the same file, which is exactly what happens
+ * when background downloads and Swing refreshes touch the manifest in parallel.
+ * Since this application is a single desktop process, in-memory locking is the
+ * correct and more robust approach here.</p>
+ *
  * @author Sergej Zerr
  */
 public class ManifestService {
@@ -4827,15 +4849,22 @@ public class ManifestService {
     private static final int IO_RETRIES = 8;
     private static final long BASE_RETRY_DELAY_MILLIS = 75L;
 
+    /**
+     * One read/write lock per normalized manifest path, shared across all
+     * ManifestService instances in this JVM.
+     */
+    private static final ConcurrentHashMap<Path, ReentrantReadWriteLock> PATH_LOCKS =
+            new ConcurrentHashMap<>();
+
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     /**
      * Reads the manifest in a UI-friendly, lenient way.
      *
-     * <p>If the manifest is temporarily unreadable because another thread or
-     * process is replacing it, this method retries a few times and finally
-     * returns an empty list instead of failing the caller. This is suitable
-     * for view refresh logic.</p>
+     * <p>If the manifest is temporarily unreadable because another thread is
+     * replacing it, this method retries a few times and finally returns an
+     * empty list instead of failing the caller. This is suitable for view
+     * refresh logic.</p>
      *
      * @param manifestPath path to the manifest file
      * @return manifest entries, or an empty list when no stable manifest
@@ -4863,9 +4892,9 @@ public class ManifestService {
     /**
      * Writes the manifest atomically as far as the platform allows.
      *
-     * <p>The implementation uses a per-manifest lock file plus a unique
-     * temporary file for each write attempt. This is more robust than using a
-     * single fixed temp file name, especially on Windows.</p>
+     * <p>The implementation uses a unique temporary file for each write
+     * attempt. This is much more robust than using a single fixed temp file
+     * name, especially on Windows and shared folders.</p>
      *
      * @param manifestPath path to the manifest file
      * @param entries entries to persist
@@ -4875,93 +4904,85 @@ public class ManifestService {
             throw new IllegalArgumentException("manifestPath must not be null");
         }
 
+        Path normalizedPath = normalize(manifestPath);
+        ReentrantReadWriteLock lock = lockFor(normalizedPath);
+        lock.writeLock().lock();
+
         try {
-            Path parent = manifestPath.getParent();
+            Path parent = normalizedPath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
 
-            Path lockPath = lockPathOf(manifestPath);
+            IOException lastError = null;
 
-            try (FileChannel lockChannel = FileChannel.open(
-                    lockPath,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.WRITE);
-                 FileLock ignored = lockChannel.lock()) {
+            for (int attempt = 1; attempt <= IO_RETRIES; attempt++) {
+                Path tempFile = tempPathOf(normalizedPath);
+                Path backupFile = backupPathOf(normalizedPath);
 
-                IOException lastError = null;
+                try {
+                    writeJson(tempFile, entries);
 
-                for (int attempt = 1; attempt <= IO_RETRIES; attempt++) {
-                    Path tempFile = tempPathOf(manifestPath);
-                    Path backupFile = backupPathOf(manifestPath);
+                    if (Files.exists(normalizedPath)) {
+                        try {
+                            Files.copy(
+                                    normalizedPath,
+                                    backupFile,
+                                    StandardCopyOption.REPLACE_EXISTING);
+                        } catch (IOException backupError) {
+                            LOGGER.log(
+                                    Level.FINE,
+                                    "Could not refresh manifest backup: " + backupFile,
+                                    backupError);
+                        }
+                    }
+
+                    moveReplace(tempFile, normalizedPath);
+                    return;
+                } catch (IOException e) {
+                    lastError = e;
 
                     try {
-                        writeJson(tempFile, entries);
-
-                        if (Files.exists(manifestPath)) {
-                            try {
-                                Files.copy(
-                                        manifestPath,
-                                        backupFile,
-                                        StandardCopyOption.REPLACE_EXISTING);
-                            } catch (IOException backupError) {
-                                LOGGER.log(
-                                        Level.FINE,
-                                        "Could not refresh manifest backup: " + backupFile,
-                                        backupError);
-                            }
-                        }
-
-                        moveReplace(tempFile, manifestPath);
-                        return;
-                    } catch (IOException e) {
-                        lastError = e;
-
-                        try {
-                            Files.deleteIfExists(tempFile);
-                        } catch (IOException ignoredDelete) {
-                            // Best effort cleanup only.
-                        }
-
-                        LOGGER.log(
-                                Level.FINE,
-                                "Manifest write attempt " + attempt + " failed for " + manifestPath,
-                                e);
-                        sleepQuietly(retryDelayMillis(attempt));
+                        Files.deleteIfExists(tempFile);
+                    } catch (IOException ignoredDelete) {
+                        // Best effort cleanup only.
                     }
-                }
 
-                throw new IllegalStateException(
-                        "Could not write manifest: " + manifestPath,
-                        lastError);
+                    LOGGER.log(
+                            Level.FINE,
+                            "Manifest write attempt " + attempt + " failed for " + normalizedPath,
+                            e);
+                    sleepQuietly(retryDelayMillis(attempt));
+                }
             }
+
+            throw new IllegalStateException(
+                    "Could not write manifest: " + normalizedPath,
+                    lastError);
         } catch (IOException e) {
-            throw new IllegalStateException("Could not write manifest: " + manifestPath, e);
+            throw new IllegalStateException("Could not write manifest: " + normalizedPath, e);
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
     private List<DownloadManifestEntry> readInternal(Path manifestPath, boolean strict) {
-        if (manifestPath == null || !Files.exists(manifestPath)) {
+        if (manifestPath == null) {
             return new ArrayList<>();
         }
 
-        Path lockPath = lockPathOf(manifestPath);
+        Path normalizedPath = normalize(manifestPath);
+        if (!Files.exists(normalizedPath)) {
+            return new ArrayList<>();
+        }
+
+        ReentrantReadWriteLock lock = lockFor(normalizedPath);
         Exception lastError = null;
 
         for (int attempt = 1; attempt <= IO_RETRIES; attempt++) {
+            lock.readLock().lock();
             try {
-                Path parent = manifestPath.getParent();
-                if (parent != null) {
-                    Files.createDirectories(parent);
-                }
-
-                try (FileChannel lockChannel = FileChannel.open(
-                        lockPath,
-                        StandardOpenOption.CREATE,
-                        StandardOpenOption.WRITE);
-                     FileLock ignored = lockChannel.lock(0L, Long.MAX_VALUE, true);
-                     Reader reader = Files.newBufferedReader(manifestPath, StandardCharsets.UTF_8)) {
-
+                try (Reader reader = Files.newBufferedReader(normalizedPath, StandardCharsets.UTF_8)) {
                     DownloadManifestEntry[] entries =
                             gson.fromJson(reader, DownloadManifestEntry[].class);
 
@@ -4973,26 +4994,28 @@ public class ManifestService {
                 lastError = e;
                 LOGGER.log(
                         Level.FINE,
-                        "Manifest temporarily unreadable, retrying: " + manifestPath,
+                        "Manifest temporarily unreadable, retrying: " + normalizedPath,
                         e);
             } catch (IOException e) {
                 lastError = e;
                 LOGGER.log(
                         Level.FINE,
-                        "Manifest read attempt " + attempt + " failed for " + manifestPath,
+                        "Manifest read attempt " + attempt + " failed for " + normalizedPath,
                         e);
+            } finally {
+                lock.readLock().unlock();
             }
 
             sleepQuietly(retryDelayMillis(attempt));
         }
 
         if (strict) {
-            throw new IllegalStateException("Could not read manifest: " + manifestPath, lastError);
+            throw new IllegalStateException("Could not read manifest: " + normalizedPath, lastError);
         }
 
         LOGGER.log(
                 Level.FINE,
-                "Giving up on lenient manifest read, returning empty list: " + manifestPath,
+                "Giving up on lenient manifest read, returning empty list: " + normalizedPath,
                 lastError);
 
         return new ArrayList<>();
@@ -5026,10 +5049,6 @@ public class ManifestService {
         }
     }
 
-    private Path lockPathOf(Path manifestPath) {
-        return manifestPath.resolveSibling(manifestPath.getFileName() + ".lck");
-    }
-
     private Path backupPathOf(Path manifestPath) {
         return manifestPath.resolveSibling(manifestPath.getFileName() + ".bak");
     }
@@ -5040,6 +5059,14 @@ public class ManifestService {
                 + "."
                 + ThreadLocalRandom.current().nextInt(1_000_000);
         return manifestPath.resolveSibling(manifestPath.getFileName() + suffix);
+    }
+
+    private ReentrantReadWriteLock lockFor(Path manifestPath) {
+        return PATH_LOCKS.computeIfAbsent(manifestPath, key -> new ReentrantReadWriteLock(true));
+    }
+
+    private Path normalize(Path path) {
+        return path.toAbsolutePath().normalize();
     }
 
     private long retryDelayMillis(int attempt) {
@@ -7201,13 +7228,13 @@ exit 0
         <app.scheme>hvdvdl</app.scheme>
         <app.win.upgrade.uuid>3f4d0f9d-0a84-4e1f-9ec7-2f37d6d3f9a1</app.win.upgrade.uuid>
 
-        <output.base>/home/szerr/gitdvdl/harvard-dataverse-downloader/output</output.base>
-        <dist.dir>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</dist.dir>
+        <output.base>X:\\gitdvdl\\harvard-dataverse-downloader/output</output.base>
+        <dist.dir>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</dist.dir>
 
-        <filtered.jpackage.resources.base>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources</filtered.jpackage.resources.base>
-        <filtered.jpackage.resources.linux>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/linux</filtered.jpackage.resources.linux>
-        <filtered.jpackage.resources.mac>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/mac</filtered.jpackage.resources.mac>
-        <filtered.jpackage.resources.windows>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/windows</filtered.jpackage.resources.windows>
+        <filtered.jpackage.resources.base>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources</filtered.jpackage.resources.base>
+        <filtered.jpackage.resources.linux>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/linux</filtered.jpackage.resources.linux>
+        <filtered.jpackage.resources.mac>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/mac</filtered.jpackage.resources.mac>
+        <filtered.jpackage.resources.windows>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/windows</filtered.jpackage.resources.windows>
 
         <fatjar.finalName>dataverse-downloader-all</fatjar.finalName>
 
@@ -7296,7 +7323,7 @@ exit 0
                         </goals>
                         <configuration>
                             <includeScope>runtime</includeScope>
-                            <outputDirectory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input/lib</outputDirectory>
+                            <outputDirectory>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input/lib</outputDirectory>
                         </configuration>
                     </execution>
                 </executions>
@@ -7314,10 +7341,10 @@ exit 0
                             <goal>copy-resources</goal>
                         </goals>
                         <configuration>
-                            <outputDirectory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</outputDirectory>
+                            <outputDirectory>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</outputDirectory>
                             <resources>
                                 <resource>
-                                    <directory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target</directory>
+                                    <directory>X:\\gitdvdl\\harvard-dataverse-downloader\\target</directory>
                                     <includes>
                                         <include>dataverse-downloader.jar</include>
                                     </includes>
@@ -7333,11 +7360,11 @@ exit 0
                             <goal>copy-resources</goal>
                         </goals>
                         <configuration>
-                            <outputDirectory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/linux</outputDirectory>
+                            <outputDirectory>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/linux</outputDirectory>
                             <overwrite>true</overwrite>
                             <resources>
                                 <resource>
-                                    <directory>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/linux/jpackage-resources</directory>
+                                    <directory>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/linux/jpackage-resources</directory>
                                     <filtering>true</filtering>
                                 </resource>
                             </resources>
@@ -7351,11 +7378,11 @@ exit 0
                             <goal>copy-resources</goal>
                         </goals>
                         <configuration>
-                            <outputDirectory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/mac</outputDirectory>
+                            <outputDirectory>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/mac</outputDirectory>
                             <overwrite>true</overwrite>
                             <resources>
                                 <resource>
-                                    <directory>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/mac/jpackage-resources</directory>
+                                    <directory>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/mac/jpackage-resources</directory>
                                     <filtering>true</filtering>
                                 </resource>
                             </resources>
@@ -7369,11 +7396,11 @@ exit 0
                             <goal>copy-resources</goal>
                         </goals>
                         <configuration>
-                            <outputDirectory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/windows</outputDirectory>
+                            <outputDirectory>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/windows</outputDirectory>
                             <overwrite>true</overwrite>
                             <resources>
                                 <resource>
-                                    <directory>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/windows/jpackage-resources</directory>
+                                    <directory>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/windows/jpackage-resources</directory>
                                     <filtering>true</filtering>
                                 </resource>
                             </resources>
@@ -7426,11 +7453,11 @@ exit 0
                                     <goal>copy-resources</goal>
                                 </goals>
                                 <configuration>
-                                    <outputDirectory>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1</outputDirectory>
+                                    <outputDirectory>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1</outputDirectory>
                                     <overwrite>true</overwrite>
                                     <resources>
                                         <resource>
-                                            <directory>/home/szerr/gitdvdl/harvard-dataverse-downloader/target</directory>
+                                            <directory>X:\\gitdvdl\\harvard-dataverse-downloader\\target</directory>
                                             <includes>
                                                 <include>dataverse-downloader-all.jar</include>
                                             </includes>
@@ -7466,10 +7493,10 @@ exit 0
                                         <argument>app-image</argument>
 
                                         <argument>--dest</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1/linux</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1/linux</argument>
 
                                         <argument>--input</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</argument>
 
                                         <argument>--name</argument>
                                         <argument>Dataverse Downloader</argument>
@@ -7487,10 +7514,10 @@ exit 0
                                         <argument>University of Bonn</argument>
 
                                         <argument>--icon</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/linux/dataverse.png</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/linux/dataverse.png</argument>
 
                                         <argument>--resource-dir</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/linux</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/linux</argument>
 
                                         <argument>--java-options</argument>
                                         <argument>-Dfile.encoding=UTF-8</argument>
@@ -7525,10 +7552,10 @@ exit 0
                                         <argument>app-image</argument>
 
                                         <argument>--dest</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1/mac</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1/mac</argument>
 
                                         <argument>--input</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</argument>
 
                                         <argument>--name</argument>
                                         <argument>Dataverse Downloader</argument>
@@ -7546,10 +7573,10 @@ exit 0
                                         <argument>University of Bonn</argument>
 
                                         <argument>--icon</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/mac/dataverse.icns</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/mac/dataverse.icns</argument>
 
                                         <argument>--resource-dir</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/mac</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/mac</argument>
 
                                         <argument>--java-options</argument>
                                         <argument>-Dfile.encoding=UTF-8</argument>
@@ -7584,10 +7611,10 @@ exit 0
                                         <argument>app-image</argument>
 
                                         <argument>--dest</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1/windows</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1/windows</argument>
 
                                         <argument>--input</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</argument>
 
                                         <argument>--name</argument>
                                         <argument>Dataverse Downloader</argument>
@@ -7605,10 +7632,10 @@ exit 0
                                         <argument>University of Bonn</argument>
 
                                         <argument>--icon</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/windows/dataverse.ico</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/windows/dataverse.ico</argument>
 
                                         <argument>--resource-dir</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/windows</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/windows</argument>
 
                                         <argument>--java-options</argument>
                                         <argument>-Dfile.encoding=UTF-8</argument>
@@ -7643,10 +7670,10 @@ exit 0
                                         <argument>msi</argument>
 
                                         <argument>--dest</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1/windows</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1/windows</argument>
 
                                         <argument>--input</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</argument>
 
                                         <argument>--name</argument>
                                         <argument>Dataverse Downloader</argument>
@@ -7664,10 +7691,10 @@ exit 0
                                         <argument>University of Bonn</argument>
 
                                         <argument>--icon</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/windows/dataverse.ico</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/windows/dataverse.ico</argument>
 
                                         <argument>--resource-dir</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/windows</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/windows</argument>
 
                                         <argument>--win-upgrade-uuid</argument>
                                         <argument>3f4d0f9d-0a84-4e1f-9ec7-2f37d6d3f9a1</argument>
@@ -7708,10 +7735,10 @@ exit 0
                                         <argument>dmg</argument>
 
                                         <argument>--dest</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1/mac</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1/mac</argument>
 
                                         <argument>--input</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</argument>
 
                                         <argument>--name</argument>
                                         <argument>Dataverse Downloader</argument>
@@ -7729,10 +7756,10 @@ exit 0
                                         <argument>University of Bonn</argument>
 
                                         <argument>--icon</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/mac/dataverse.icns</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/mac/dataverse.icns</argument>
 
                                         <argument>--resource-dir</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/mac</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/mac</argument>
 
                                         <argument>--java-options</argument>
                                         <argument>-Dfile.encoding=UTF-8</argument>
@@ -7767,10 +7794,10 @@ exit 0
                                         <argument>deb</argument>
 
                                         <argument>--dest</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/output/java/0.1.1/linux</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\output\\windows\\0.1.1/linux</argument>
 
                                         <argument>--input</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/jpackage-input</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/jpackage-input</argument>
 
                                         <argument>--name</argument>
                                         <argument>dataverse-downloader</argument>
@@ -7788,10 +7815,10 @@ exit 0
                                         <argument>University of Bonn</argument>
 
                                         <argument>--icon</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/packaging/linux/dataverse.png</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader/packaging/linux/dataverse.png</argument>
 
                                         <argument>--resource-dir</argument>
-                                        <argument>/home/szerr/gitdvdl/harvard-dataverse-downloader/target/filtered-jpackage-resources/linux</argument>
+                                        <argument>X:\\gitdvdl\\harvard-dataverse-downloader\\target/filtered-jpackage-resources/linux</argument>
 
                                         <argument>--linux-shortcut</argument>
 

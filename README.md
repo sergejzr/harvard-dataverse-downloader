@@ -30,6 +30,15 @@ This tool solves those problems with selective downloads, resume support, and a 
 - 🔗 Browser integration via `hvdvdl://`
 - 📦 Native installers (Windows & Linux)
 
+
+------------------------------------------------------------------------
+
+## 📸 Screenshots
+
+<img width="700" src="https://github.com/user-attachments/assets/31594c89-84ce-4750-8b12-3b2900ec9df3" />
+<img width="700" src="https://github.com/user-attachments/assets/80d2b3bb-f5cb-49f9-8df4-b0b49065cf2c" />
+<img width="700" src="https://github.com/user-attachments/assets/9c26b0ba-342f-4238-bed4-1cf1727d6ac0" />
+
 ------------------------------------------------------------------------
 
 ## 📦 Download
@@ -116,14 +125,6 @@ hvdvdl://open?url=https%3A%2F%2Fbonndata.uni-bonn.de%2Fdataset.xhtml%3Fpersisten
 - Output folder
 - Parallel downloads
 - Overwrite policy
-
-------------------------------------------------------------------------
-
-## 📸 Screenshots
-
-<img width="700" src="https://github.com/user-attachments/assets/31594c89-84ce-4750-8b12-3b2900ec9df3" />
-<img width="700" src="https://github.com/user-attachments/assets/80d2b3bb-f5cb-49f9-8df4-b0b49065cf2c" />
-<img width="700" src="https://github.com/user-attachments/assets/9c26b0ba-342f-4238-bed4-1cf1727d6ac0" />
 
 ------------------------------------------------------------------------
 

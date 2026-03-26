@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+rm -f /usr/share/applications/dataverse-downloader.desktop
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+
+if command -v xdg-desktop-menu >/dev/null 2>&1; then
+    xdg-desktop-menu forceupdate >/dev/null 2>&1 || true
+fi
+
+exit 0

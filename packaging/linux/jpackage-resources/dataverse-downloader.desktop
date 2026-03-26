@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Dataverse Downloader
+Comment=Download datasets from Dataverse repositories
+Exec=/opt/dataverse-downloader/bin/dataverse-downloader %u
+Icon=dataverse-downloader
+Terminal=false
+Type=Application
+Categories=Network;Utility;
+MimeType=x-scheme-handler/hvdvdl;
+StartupNotify=true
+NoDisplay=false

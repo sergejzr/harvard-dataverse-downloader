@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
+ "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- Basic app info -->
+    <key>CFBundleName</key>
+    <string>${app.name}</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>${app.name}</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>de.unibn.hrz.dataverse.downloader</string>
+
+    <key>CFBundleVersion</key>
+    <string>${app.package.version}</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>${app.package.version}</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleExecutable</key>
+    <string>Dataverse Downloader</string>
+
+    <!-- URL scheme handler -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>Dataverse Downloader URL</string>
+
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>${app.scheme}</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- Recommended settings -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+
+</dict>
+</plist>

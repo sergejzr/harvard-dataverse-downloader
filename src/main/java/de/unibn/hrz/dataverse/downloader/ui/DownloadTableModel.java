@@ -69,7 +69,7 @@ public class DownloadTableModel extends AbstractTableModel {
 
     public void upsert(DownloadTask task) {
         int existingIndex = tasks.indexOf(task);
-
+        
         if (existingIndex < 0) {
             int insertIndex = findInsertIndex(task);
             tasks.add(insertIndex, task);
@@ -87,11 +87,15 @@ public class DownloadTableModel extends AbstractTableModel {
          * Instead, remove only the updated item and insert it again at its
          * correct new position. This moves exactly one row, not the full table.
          */
+        int newIndex = existingIndex;
+        //task.getStatus()
+        if(task.getProgressPercent()<=5&&task.getProgressPercent()>=98) {
         tasks.remove(existingIndex);
-        int newIndex = findInsertIndex(task);
+        newIndex = findInsertIndex(task);
         tasks.add(newIndex, task);
-
+        }
         if (newIndex == existingIndex) {
+        	
             fireTableRowsUpdated(newIndex, newIndex);
         } else {
             fireTableDataChanged();

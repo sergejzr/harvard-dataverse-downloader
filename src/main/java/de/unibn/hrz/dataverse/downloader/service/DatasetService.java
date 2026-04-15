@@ -75,6 +75,29 @@ public class DatasetService {
             info.setPersistentId(ref.getPersistentId());
             info.setTitle(ref.getTitle());
             info.setServerUrl(effectiveServerUrl);
+            info.setLicenseName(ref.getLicenseName());
+            info.setLicenseUri(ref.getLicenseUri());
+            info.setLicenseIconUri(ref.getLicenseIconURI());
+            
+            info.setLicenseName(ref.getLicenseName());
+            info.setLicenseUri(ref.getLicenseUri());
+            info.setLicenseIconUri(ref.getLicenseIconURI());
+
+            info.setTermsOfUse(ref.getTermsOfUse());
+            info.setConfidentialityDeclaration(ref.getConfidentialityDeclaration());
+            info.setSpecialPermissions(ref.getSpecialPermissions());
+            info.setRestrictions(ref.getRestrictions());
+            info.setCitationRequirements(ref.getCitationRequirements());
+            info.setDepositorRequirements(ref.getDepositorRequirements());
+            info.setConditions(ref.getConditions());
+            info.setDisclaimer(ref.getDisclaimer());
+            info.setDataAccessPlace(ref.getDataAccessPlace());
+            info.setOriginalArchive(ref.getOriginalArchive());
+            info.setAvailabilityStatus(ref.getAvailabilityStatus());
+            info.setContactForAccess(ref.getContactForAccess());
+            info.setSizeOfCollection(ref.getSizeOfCollection());
+            info.setStudyCompletion(ref.getStudyCompletion());
+            
 
             effectiveListener.onStatus("Fetching file count...");
             effectiveListener.onProgress(15);
@@ -137,6 +160,7 @@ public class DatasetService {
         }
     }
 
+ 
     private List<DatasetFileEntry> loadFilesPaged(
             String serverUrl,
             String apiKey,
@@ -223,88 +247,12 @@ public class DatasetService {
         return result;
     }
 
-    private void fillDatasetTitle(String serverUrl, String apiKey, String urlOrDoi, DatasetInfo info)
-            throws IOException, InterruptedException {
-        try {
-            JsonObject dataset = apiClient.fetchDatasetJson(serverUrl, urlOrDoi, apiKey);
 
-            long fetchedId = extractDatasetId(dataset);
-            if (info.getDatasetId() == 0L) {
-                info.setDatasetId(fetchedId);
-            }
 
-            String fetchedPid = extractPersistentId(dataset);
-            if (info.getPersistentId() == null || info.getPersistentId().isBlank()) {
-                info.setPersistentId(fetchedPid);
-            }
 
-            String title = extractTitle(dataset);
-            if (title != null && !title.isBlank()) {
-                info.setTitle(title);
-            }
-        } catch (Exception e) {
-            LOG.warning("Could not fetch full dataset title; using fallback title. Reason: " + e.getMessage());
-            if (info.getTitle() == null || info.getTitle().isBlank()) {
-                if (info.getPersistentId() != null && !info.getPersistentId().isBlank()) {
-                    info.setTitle(info.getPersistentId());
-                } else {
-                    info.setTitle("dataset");
-                }
-            }
-        }
-    }
-    private void fillDatasetTitleFast(DatasetInfo info)
-          {}
-    private long extractDatasetId(JsonObject dataset) {
-        if (dataset.has("id") && !dataset.get("id").isJsonNull()) {
-            return dataset.get("id").getAsLong();
-        }
-        throw new IllegalStateException("Could not find dataset id in API response.");
-    }
 
-    private String extractTitle(JsonObject dataset) {
-        if (dataset.has("latestVersion") && dataset.get("latestVersion").isJsonObject()) {
-            JsonObject latestVersion = dataset.getAsJsonObject("latestVersion");
-            if (latestVersion.has("metadataBlocks") && latestVersion.get("metadataBlocks").isJsonObject()) {
-                JsonObject metadataBlocks = latestVersion.getAsJsonObject("metadataBlocks");
-                for (String key : metadataBlocks.keySet()) {
-                    JsonObject block = metadataBlocks.getAsJsonObject(key);
-                    if (block == null || !block.has("fields") || !block.get("fields").isJsonArray()) {
-                        continue;
-                    }
 
-                    JsonArray fields = block.getAsJsonArray("fields");
-                    for (JsonElement fieldElement : fields) {
-                        if (!fieldElement.isJsonObject()) {
-                            continue;
-                        }
 
-                        JsonObject field = fieldElement.getAsJsonObject();
-                        if (field.has("typeName")
-                                && !field.get("typeName").isJsonNull()
-                                && "title".equals(field.get("typeName").getAsString())
-                                && field.has("value")
-                                && !field.get("value").isJsonNull()) {
-                            return field.get("value").getAsString();
-                        }
-                    }
-                }
-            }
-        }
-
-        if (dataset.has("persistentId") && !dataset.get("persistentId").isJsonNull()) {
-            return dataset.get("persistentId").getAsString();
-        }
-
-        return "dataset";
-    }
-
-    private String extractPersistentId(JsonObject dataset) {
-        if (dataset.has("persistentId") && !dataset.get("persistentId").isJsonNull()) {
-            return dataset.get("persistentId").getAsString();
-        }
-        throw new IllegalStateException("Could not find dataset persistent identifier in API response.");
-    }
 
     private DatasetFileEntry toFileEntry(JsonObject item) {
         if (item == null || !item.has("dataFile") || !item.get("dataFile").isJsonObject()) {

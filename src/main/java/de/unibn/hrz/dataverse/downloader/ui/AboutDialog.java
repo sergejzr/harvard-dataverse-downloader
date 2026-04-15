@@ -45,7 +45,8 @@ import javax.swing.UIManager;
 
 public class AboutDialog extends JDialog {
 
-    private static final String RDM_URL = "https://www.forschungsdaten.uni-bonn.de";
+    private static final long serialVersionUID = 287131993362143937L;
+	private static final String RDM_URL = "https://www.forschungsdaten.uni-bonn.de";
     private static final String UBONN_URL = "https://www.uni-bonn.de";
     private static final String DATAVERSE_URL = "https://dataverse.org";
     private static final String GITHUB_URL = "https://github.com/sergejzr/harvard-dataverse-downloader";
@@ -168,9 +169,16 @@ public class AboutDialog extends JDialog {
         }
 
         ImageIcon icon = new ImageIcon(resource);
-        Image scaled = scaleToFit(icon, maxWidth, maxHeight);
-        label = new JLabel(new ImageIcon(scaled));
+        //Image scaled = scaleToFit(icon, maxWidth, maxHeight);
+        
+        ImageIcon scaled = Tools.scaleIconPreserveRatio(icon, Math.max(maxWidth, maxHeight));
+        
+        label = new JLabel(scaled);
         label.setHorizontalAlignment(SwingConstants.CENTER);
+        
+        label.setHorizontalAlignment(JLabel.CENTER);
+        label.setVerticalAlignment(JLabel.CENTER);
+        
         label.setToolTipText(tooltip);
         label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         label.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -197,24 +205,8 @@ public class AboutDialog extends JDialog {
         return label;
     }
 
-    private Image scaleToFit(ImageIcon icon, int maxWidth, int maxHeight) {
-        int originalWidth = icon.getIconWidth();
-        int originalHeight = icon.getIconHeight();
 
-        if (originalWidth <= 0 || originalHeight <= 0) {
-            return icon.getImage();
-        }
-
-        double widthRatio = (double) maxWidth / originalWidth;
-        double heightRatio = (double) maxHeight / originalHeight;
-        double scale = Math.min(widthRatio, heightRatio);
-
-        int scaledWidth = Math.max(1, (int) Math.round(originalWidth * scale));
-        int scaledHeight = Math.max(1, (int) Math.round(originalHeight * scale));
-
-        return icon.getImage().getScaledInstance(scaledWidth, scaledHeight, Image.SCALE_SMOOTH);
-    }
-
+   
     private void openLink(String url) {
         try {
             if (Desktop.isDesktopSupported()) {

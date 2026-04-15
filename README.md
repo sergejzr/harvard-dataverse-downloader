@@ -147,7 +147,7 @@ mvn clean package
 ## ▶️ Run (Dev)
 
 ```bash
-mvn exec:java -Dexec.mainClass="com.example.dataverse.downloader.App"
+mvn exec:java -Dexec.mainClass="de.unibn.hrz.dataverse.downloader.App"
 ```
 
 ------------------------------------------------------------------------

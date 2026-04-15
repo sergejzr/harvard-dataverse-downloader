@@ -106,7 +106,7 @@ public class DownloadManagerPanel extends JPanel implements DownloadManager.List
                 setText(status.name());
 
                 if (!isSelected && status == Status.COMPLETED) {
-                    setForeground(COMPLETED_GREEN);
+                	 setForeground(COMPLETED_GREEN);
                 } else {
                     setForeground(isSelected
                             ? table.getSelectionForeground()

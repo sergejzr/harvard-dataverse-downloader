@@ -47,7 +47,11 @@ public class PreferencesService {
     private final Path dbPath;
 
     public PreferencesService() {
-        this.dbPath = Paths.get(System.getProperty("user.home"), APP_DIR, DB_NAME);
+        this(Paths.get(System.getProperty("user.home"), APP_DIR, DB_NAME));
+    }
+
+    public PreferencesService(Path dbPath) {
+        this.dbPath = dbPath;
         initializeDatabase();
     }
 
@@ -252,5 +256,36 @@ public class PreferencesService {
 
     private String normalizeHistoryUrl(String value) {
         return value == null ? "" : value.trim();
+    }
+    public void removeDatasetUrlHistoryEntry(String url) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+
+        String sql = """
+                DELETE FROM dataset_url_history
+                WHERE url = ?
+                """;
+
+        try (Connection connection = connect();
+             PreparedStatement ps = connection.prepareStatement(sql)) {
+
+            ps.setString(1, url.trim());
+            ps.executeUpdate();
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not remove dataset URL history entry", e);
+        }
+    }
+
+    public void clearDatasetUrlHistory() {
+        String sql = "DELETE FROM dataset_url_history";
+
+        try (Connection connection = connect();
+             Statement statement = connection.createStatement()) {
+
+            statement.executeUpdate(sql);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not clear dataset URL history", e);
+        }
     }
 }

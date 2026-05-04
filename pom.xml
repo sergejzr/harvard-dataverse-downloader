@@ -5,7 +5,7 @@
 
     <groupId>de.unibn.hrz.dataverse</groupId>
     <artifactId>dataverse-downloader</artifactId>
-    <version>0.1.1-SNAPSHOT</version>
+    <version>0.1.2-SNAPSHOT</version>
     <name>Dataverse Downloader</name>
     <description>Java Swing downloader for Harvard Dataverse datasets</description>
     <packaging>jar</packaging>

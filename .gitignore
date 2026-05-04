@@ -89,3 +89,5 @@ logs/
 ############################
 *.swp
 *.swo
+create_context.sh
+context.txt

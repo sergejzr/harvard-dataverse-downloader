@@ -65,6 +65,7 @@ import de.unibn.hrz.dataverse.downloader.model.DatasetInfo;
 import de.unibn.hrz.dataverse.downloader.model.DownloadTask;
 import de.unibn.hrz.dataverse.downloader.persistence.PreferencesService;
 import de.unibn.hrz.dataverse.downloader.service.DatasetLoadListener;
+import de.unibn.hrz.dataverse.downloader.service.DatasetLoadStatus;
 import de.unibn.hrz.dataverse.downloader.service.DatasetService;
 import de.unibn.hrz.dataverse.downloader.service.DownloadManager;
 import de.unibn.hrz.dataverse.downloader.service.DownloadService;
@@ -295,8 +296,8 @@ public class MainFrame extends JFrame {
 				return datasetService.loadDataset(preferences.getServerUrl(), preferences.getApiKey(), datasetValue,
 						new DatasetLoadListener() {
 							@Override
-							public void onStatus(String message) {
-								publish(() -> loadingDialog.setStatus(message));
+							public void onStatusChanged(DatasetLoadStatus previous, DatasetLoadStatus current) {
+								publish(() -> loadingDialog.setTransition(previous, current));
 							}
 
 							@Override
@@ -624,23 +625,41 @@ public class MainFrame extends JFrame {
 		private static final long serialVersionUID = -3422256654292648919L;
 
 		private final JLabel statusLabel = new JLabel("Starting...");
+		private final JLabel transitionLabel = new JLabel(" ");
 		private final JLabel detailLabel = new JLabel(" ");
 		private final JProgressBar progressBar = new JProgressBar(0, 100);
 
 		private LoadingDialog(Frame owner, String title) {
 			super(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
 
+			JPanel textPanel = new JPanel(new BorderLayout(0, 4));
+			textPanel.add(statusLabel, BorderLayout.NORTH);
+			textPanel.add(transitionLabel, BorderLayout.CENTER);
+			textPanel.add(detailLabel, BorderLayout.SOUTH);
+
 			JPanel panel = new JPanel(new BorderLayout(10, 10));
 			panel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
-			panel.add(statusLabel, BorderLayout.NORTH);
+			panel.add(textPanel, BorderLayout.NORTH);
 			panel.add(progressBar, BorderLayout.CENTER);
-			panel.add(detailLabel, BorderLayout.SOUTH);
 
 			setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
 			setContentPane(panel);
-			setSize(420, 140);
+			setSize(520, 170);
 			setResizable(false);
 			setLocationRelativeTo(owner);
+		}
+
+		void setTransition(DatasetLoadStatus previous, DatasetLoadStatus current) {
+			setStatus(current == null ? "" : current.getDisplayMessage());
+
+			if (previous == null) {
+				transitionLabel.setText(" ");
+				return;
+			}
+
+			transitionLabel.setText(
+					"Previous: " + previous.getDisplayMessage()
+							+ " → Current: " + (current == null ? "" : current.getDisplayMessage()));
 		}
 
 		void setStatus(String message) {

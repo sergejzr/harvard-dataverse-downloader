@@ -1,24 +1,3 @@
-/*
- * Dataverse Downloader
- *
- * Copyright (c) 2026 Service Center for Research Data Management,
- * University of Bonn
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * Author: Sergej Zerr
- * Organization: Service Center for Research Data Management, University of Bonn
- */
 package de.unibn.hrz.dataverse.downloader.ui;
 
 import java.util.ArrayList;
@@ -69,83 +48,58 @@ public class DownloadTableModel extends AbstractTableModel {
 
     public void upsert(DownloadTask task) {
         int existingIndex = tasks.indexOf(task);
-        
+
+        // New task
         if (existingIndex < 0) {
-            int insertIndex = findInsertIndex(task);
+            int insertIndex = findInsertIndex(task.getStatus());
             tasks.add(insertIndex, task);
             fireTableRowsInserted(insertIndex, insertIndex);
             return;
         }
 
-        /*
-         * Important:
-         * DownloadTask is mutable and the table keeps the same object reference.
-         * So when status/progress changes, the object already reflects the new
-         * state by the time we get here. Therefore we cannot compare "old group"
-         * vs "new group" using the object currently stored in the list.
-         *
-         * Instead, remove only the updated item and insert it again at its
-         * correct new position. This moves exactly one row, not the full table.
-         */
-        int newIndex = existingIndex;
-        //task.getStatus()
-        if(task.getProgressPercent()<=5&&task.getProgressPercent()>=98) {
+        DownloadTask existingTask = tasks.get(existingIndex);
+        Status oldStatus = existingTask.getStatus();
+        Status newStatus = task.getStatus();
+
+        // Replace stored task data
+        tasks.set(existingIndex, task);
+
+        // Same cluster -> keep row where it is
+        if (oldStatus == newStatus) {
+            fireTableRowsUpdated(existingIndex, existingIndex);
+            return;
+        }
+
+        // Different cluster -> move to end of new cluster
         tasks.remove(existingIndex);
-        newIndex = findInsertIndex(task);
+        int newIndex = findInsertIndex(newStatus);
         tasks.add(newIndex, task);
-        }
-        if (newIndex == existingIndex) {
-        	
-            fireTableRowsUpdated(newIndex, newIndex);
-        } else {
-            fireTableDataChanged();
-        }
+
+        fireTableDataChanged();
     }
 
-    private int findInsertIndex(DownloadTask task) {
-        int targetGroup = sortGroup(task);
-        ///if (targetGroup==0) {return }
-        for (int i = 0; i < tasks.size(); i++) {
-            DownloadTask current = tasks.get(i);
-            int currentGroup = sortGroup(current);
+    /**
+     * Returns the position where a task with the given status should be inserted.
+     * It will be appended to the end of its status cluster.
+     */
+    private int findInsertIndex(Status status) {
+        int newPriority = priority(status);
 
-            if (targetGroup < currentGroup) {
-                return i;
-            }
+        int index = 0;
+        while (index < tasks.size() && priority(tasks.get(index).getStatus()) <= newPriority) {
+            index++;
         }
-
-        return tasks.size();
+        return index;
     }
 
-    private int sortGroup(DownloadTask task) {
-        Status status = task.getStatus();
-        int progress = task.getProgressPercent();
-
-        if (status == Status.RUNNING) {
-            return 0;
-        }
-
-        if (status == Status.PAUSED) {
-            return 1;
-        }
-
-        if (status == Status.QUEUED && progress > 0) {
-            return 1;
-        }
-
-        if (status == Status.QUEUED) {
-            return 2;
-        }
-
-        if (status == Status.FAILED) {
-            return 3;
-        }
-
-        if (status == Status.COMPLETED) {
-            return 4;
-        }
-
-        return 5;
+    private int priority(Status status) {
+        return switch (status) {
+            case RUNNING -> 0;
+            case PAUSED -> 1;
+            case QUEUED -> 2;
+            case FAILED -> 3;
+            case COMPLETED -> 4;
+        };
     }
 
     private String actionLabel(DownloadTask task) {

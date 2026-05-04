@@ -22,24 +22,28 @@
 package de.unibn.hrz.dataverse.downloader.service;
 
 /**
- * Listener for dataset loading progress and status notifications.
+ * Stable lifecycle states for dataset loading.
  *
- * <p>The primary callback is {@link #onStatusChanged(DatasetLoadStatus, DatasetLoadStatus)},
- * which supplies both the previous and the current status. A compatibility
- * bridge to {@link #onStatus(String)} is retained so existing listeners still
- * receive the current display message without needing to know the enum.</p>
+ * <p>Each enum constant provides the human-readable message that should be
+ * shown in the user interface.</p>
  *
  * @author Sergej Zerr
  */
-public interface DatasetLoadListener {
+public enum DatasetLoadStatus {
+    RESOLVING_DATASET("Resolving dataset..."),
+    FETCHING_FILE_COUNT("Fetching file count..."),
+    LOADING_FILE_METADATA("Loading file metadata..."),
+    FETCHING_DATASET_TITLE("Fetching dataset title..."),
+    FINISHED("Finished"),
+    FAILED("Failed");
 
-    void onStatusChanged(DatasetLoadStatus previous, DatasetLoadStatus current);
+    private final String displayMessage;
 
-    void onProgress(int percent);
-
-    default void onFileCountDiscovered(int totalFiles) {
+    DatasetLoadStatus(String displayMessage) {
+        this.displayMessage = displayMessage;
     }
 
-    default void onFilesLoaded(int loadedFiles, int totalFiles) {
+    public String getDisplayMessage() {
+        return displayMessage;
     }
 }

@@ -61,8 +61,10 @@ public class DatasetService {
         String effectiveServerUrl = apiClient.resolveServerUrl(serverUrl, urlOrDoi);
         LOG.info("Using Dataverse host: " + effectiveServerUrl);
 
+        DatasetLoadStatus currentStatus = null;
+
         try {
-            effectiveListener.onStatus("Resolving dataset...");
+            currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.RESOLVING_DATASET);
             effectiveListener.onProgress(5);
 
             long t1 = System.nanoTime();
@@ -75,10 +77,6 @@ public class DatasetService {
             info.setPersistentId(ref.getPersistentId());
             info.setTitle(ref.getTitle());
             info.setServerUrl(effectiveServerUrl);
-            info.setLicenseName(ref.getLicenseName());
-            info.setLicenseUri(ref.getLicenseUri());
-            info.setLicenseIconUri(ref.getLicenseIconURI());
-            
             info.setLicenseName(ref.getLicenseName());
             info.setLicenseUri(ref.getLicenseUri());
             info.setLicenseIconUri(ref.getLicenseIconURI());
@@ -99,7 +97,7 @@ public class DatasetService {
             info.setStudyCompletion(ref.getStudyCompletion());
             
 
-            effectiveListener.onStatus("Fetching file count...");
+            currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FETCHING_FILE_COUNT);
             effectiveListener.onProgress(15);
 
             String version = apiClient.defaultVersion();
@@ -111,19 +109,19 @@ public class DatasetService {
             effectiveListener.onFileCountDiscovered(totalFiles);
 
             if (totalFiles <= 0) {
-                effectiveListener.onStatus("Fetching dataset title...");
+                currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FETCHING_DATASET_TITLE);
                 effectiveListener.onProgress(95);
 
                // fillDatasetTitleFast(info);
 
                 info.setFiles(new ArrayList<>());
-                effectiveListener.onStatus("Finished");
+                currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FINISHED);
                 effectiveListener.onProgress(100);
                 LOG.info("Dataset load finished with zero files in " + elapsedMs(started) + " ms");
                 return info;
             }
 
-            effectiveListener.onStatus("Loading file metadata...");
+            currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.LOADING_FILE_METADATA);
             effectiveListener.onProgress(20);
 
             long t3 = System.nanoTime();
@@ -138,7 +136,7 @@ public class DatasetService {
 
             LOG.info("Loaded " + files.size() + " file metadata rows in " + elapsedMs(t3) + " ms");
 
-            effectiveListener.onStatus("Fetching dataset title...");
+            currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FETCHING_DATASET_TITLE);
             effectiveListener.onProgress(95);
 
             long t4 = System.nanoTime();
@@ -146,18 +144,31 @@ public class DatasetService {
             //fillDatasetTitleFast(info);
             LOG.info("Fetched dataset title in " + elapsedMs(t4) + " ms: title=" + info.getTitle());
 
-            effectiveListener.onStatus("Finished");
+            currentStatus = notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FINISHED);
             effectiveListener.onProgress(100);
 
             LOG.info("Dataset load finished in " + elapsedMs(started) + " ms");
             return info;
         } catch (IOException | InterruptedException e) {
+            notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FAILED);
             LOG.severe("Dataset load failed: " + e.getMessage());
             throw e;
         } catch (RuntimeException e) {
+            notifyStatusChange(effectiveListener, currentStatus, DatasetLoadStatus.FAILED);
             LOG.severe("Dataset load failed with runtime error: " + e.getMessage());
             throw e;
         }
+    }
+
+    private DatasetLoadStatus notifyStatusChange(
+            DatasetLoadListener listener,
+            DatasetLoadStatus previous,
+            DatasetLoadStatus current) {
+
+        if (listener != null && current != previous) {
+            listener.onStatusChanged(previous, current);
+        }
+        return current;
     }
 
  
@@ -296,7 +307,7 @@ public class DatasetService {
 
     private static final class NoOpDatasetLoadListener implements DatasetLoadListener {
         @Override
-        public void onStatus(String message) {
+        public void onStatusChanged(DatasetLoadStatus previous, DatasetLoadStatus current) {
         }
 
         @Override

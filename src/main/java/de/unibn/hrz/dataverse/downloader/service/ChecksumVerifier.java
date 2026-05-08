@@ -34,7 +34,8 @@ public class ChecksumVerifier {
         if (algorithm == null || expectedChecksum == null || expectedChecksum.isBlank()) {
             return true;
         }
-        return expectedChecksum.equalsIgnoreCase(compute(file, algorithm));
+        String realChecksum = compute(file, algorithm);
+        return expectedChecksum.equalsIgnoreCase(realChecksum);
     }
 
     public String compute(Path file, String algorithm) throws IOException {

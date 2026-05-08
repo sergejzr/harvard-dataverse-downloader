@@ -162,7 +162,7 @@ public class DownloadService {
             safeUpdateManifest(manifestPath, task, existingBytes, "RUNNING");
 
             String url = task.getServerUrl().replaceAll("/$", "")
-                    + "/api/access/datafile/" + task.getEntry().getFileId();
+                    + "/api/access/datafile/" + task.getEntry().getFileId()+"?format=original&gbrecs=true";
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(url)).GET();
 

@@ -297,6 +297,7 @@ public class DataverseApiClient {
         CustomTerms customTerms = null;
 
         reader.beginObject();
+        readxml:
         while (reader.hasNext()) {
             String rootName = reader.nextName();
             if (!"data".equals(rootName)) {
@@ -339,9 +340,11 @@ public class DataverseApiClient {
                             }
                             if (license == null) {
                                 license = info.license;
+                                break readxml;
                             }
                             if (customTerms == null) {
                                 customTerms = info.customTerms;
+                                break readxml;
                             }
                         }
                     }

@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux installer
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot dpkg-dev
+
+      - name: Build Linux installer
+        run: |
+          chmod +x scripts/build-installer.sh
+          bash scripts/build-installer.sh
+
+      - name: Normalize Linux artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+
+          cp target/*-all.jar \
+            "release-assets/dataverse-downloader_${VERSION}_fatjar.jar"
+
+          find . -name "*.deb" -type f -exec cp {} \
+            "release-assets/dataverse-downloader_${VERSION}_amd64.deb" \;
+
+      - name: Upload Linux release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          ./scripts/build-installer.ps1
+
+      - name: Normalize Windows artifacts
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF_NAME}" -replace "^v", ""
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+
+          Get-ChildItem -Recurse -Filter "*.msi" |
+            Select-Object -First 1 |
+            Copy-Item -Destination "release-assets/dataverse-downloader_${version}_windows.msi"
+
+      - name: Upload Windows release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
